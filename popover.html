@@ -40,7 +40,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,.die:focus-visible
 .die.sel{outline:3px solid var(--pri);outline-offset:2px;transform:translateY(-4px)}
 #logwrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
 #log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
-select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:60%}
+.loghead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 8px}
+.logtools{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:6px 8px;min-width:0}
+#gm:empty{display:none}
+select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);flex:none;min-width:9em;max-width:100%;text-overflow:ellipsis}
 .entry{padding:8px 10px;border-radius:8px;background:var(--card);border-left:4px solid var(--c,#888)}
 .entry .step{font-variant-numeric:tabular-nums}
 .entry b.n{font-weight:700;color:var(--fg)}
@@ -53,7 +56,7 @@ select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--lin
 <div id="err" role="alert"></div>
 <div id="main" class="card"></div>
 <div id="logwrap">
-  <div class="row" style="justify-content:space-between;flex-wrap:nowrap"><strong>Roll log</strong><span class="row" style="flex-wrap:nowrap;justify-content:flex-end"><span id="gm"></span><select id="filter" aria-label="Filter log by player"></select></span></div>
+  <div class="loghead"><strong>Roll log</strong><span class="logtools"><span id="gm"></span><select id="filter" aria-label="Filter log by player"></select></span></div>
   <div id="log"></div>
 </div>
 
