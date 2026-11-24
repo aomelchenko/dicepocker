@@ -1,0 +1,15 @@
+{
+  "name": "DicePocker",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "description": "D6 pool roller: locked dice, picked re-rolls, shared roll log.",
+  "icon": "icon.svg",
+  "action": {
+    "title": "DicePocker",
+    "icon": "icon.svg",
+    "popover": "popover.html",
+    "width": 400,
+    "height": 640
+  },
+  "background_url": "background.html"
+}

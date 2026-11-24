@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DicePocker</title>
+<style>
+:root{--bg:#222639;--fg:#fff;--mut:#a9aec4;--pri:#bb99ff;--onpri:#000;--me:#bb99ff;
+  --line:color-mix(in srgb,var(--fg) 16%,transparent);--card:color-mix(in srgb,var(--fg) 7%,transparent)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--bg);color:var(--fg);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1{margin:0;font-size:16px;font-weight:700}
+.mut{color:var(--mut)}
+#err{display:none;padding:8px 10px;border-radius:8px;background:#7a1f2b;color:#fff}
+#err.on{display:block}
+.card{padding:12px;border-radius:10px;background:var(--card);display:flex;flex-direction:column;gap:10px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.spacer{width:12px;height:44px;border-left:2px solid var(--line);margin:0 4px}
+label.f{display:flex;justify-content:space-between;align-items:center;gap:12px}
+label.f small{display:block;color:var(--mut)}
+input[type=number]{width:72px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);font:inherit;text-align:right}
+button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+button.primary{background:var(--pri);color:var(--onpri);border-color:transparent;font-weight:700}
+button.link{border:0;padding:4px 0;color:var(--mut);text-decoration:underline}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible,.die:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+.die{width:44px;height:44px;flex:none;border-radius:9px;background:#fff;border:2px solid #333;
+  display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);place-items:center;padding:6px;transition:transform .1s}
+.die i{width:7px;height:7px;border-radius:50%}
+.die i.p{background:#111}
+.die.stale{background:#8a93a6;border-color:#2b2f3a}.die.stale i.p{background:#fff}
+.die.frozen{background:#e6e1d3;border-color:#6b6b6b}
+.die.active{border:3px solid var(--me)}
+.die.pickable{cursor:pointer}
+.die.sel{outline:3px solid var(--pri);outline-offset:2px;transform:translateY(-4px)}
+#logwrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
+#log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
+select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:60%}
+.entry{padding:8px 10px;border-radius:8px;background:var(--card);border-left:4px solid var(--c,#888)}
+.entry .step{font-variant-numeric:tabular-nums}
+.entry b.n{font-weight:700;color:var(--fg)}
+.step b{color:var(--fg)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="row" style="justify-content:space-between"><h1>DicePocker</h1><span id="status" class="mut"></span></div>
+<div id="err" role="alert"></div>
+<div id="main" class="card"></div>
+<div id="logwrap">
+  <div class="row" style="justify-content:space-between"><strong>Roll log</strong><select id="filter" aria-label="Filter log by player"></select></div>
+  <div id="log"></div>
+</div>
+
+<script type="module">
+import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
+import { MAX_DICE, MAX_REROLLS, newRoll, reroll, rerollsLeft, current, encode, decode, trimLog } from "./logic.js";
+
+const PREFIX = "com.dicepocker/p/";
+const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+const h = (tag, props = {}, ...kids) => {
+  const el = Object.assign(document.createElement(tag), props);
+  el.append(...kids.flat(Infinity).filter((k) => k != null));
+  return el;
+};
+const $ = (id) => document.getElementById(id);
+
+let meta = {}, KEY = "", view = null, busy = false, error = "", logFilter = "all";
+let picked = new Set(), pickBase = "";
+const defaults = { stale: 0, pool: 6, lim: 1 };
+let cfg = (() => { try { return { ...defaults, ...JSON.parse(localStorage.getItem("dicepocker.cfg")) }; } catch { return { ...defaults }; } })();
+const saveCfg = () => { try { localStorage.setItem("dicepocker.cfg", JSON.stringify(cfg)); } catch {} };
+
+// ---------- data ----------
+async function anchor() {
+  try {
+    const [w, hh] = await Promise.all([OBR.viewport.getWidth(), OBR.viewport.getHeight()]);
+    return await OBR.viewport.inverseTransformPoint({ x: w / 2, y: hh / 2 });
+  } catch { return { x: 0, y: 0 }; }
+}
+async function commit(mutate) {
+  busy = true; error = ""; paint();
+  try {
+    const cur = meta[KEY] || {};
+    const next = mutate({ ...cur, l: [...(cur.l || [])] });
+    next.n = await OBR.player.getName();
+    next.c = await OBR.player.getColor();
+    await OBR.room.setMetadata({ [KEY]: next });
+    meta = { ...meta, [KEY]: next };
+    return true;
+  } catch (err) {
+    error = err?.message || String(err);
+    return false;
+  } finally { busy = false; paint(); }
+}
+async function doRoll(f) {
+  cfg = { stale: +f.stale.value || 0, pool: +f.pool.value || 0, lim: +f.lim.value || 0 };
+  saveCfg();
+  const a = await anchor();
+  const ok = await commit((d) => {
+    const e = newRoll({ ...cfg, x: a.x, y: a.y });
+    d.l = trimLog([encode(e), ...d.l]);
+    d.s = 1;
+    return d;
+  });
+  if (ok) { view = "result"; paint(); }
+}
+async function confirmReroll() {
+  const e = decode(meta[KEY].l[0]);
+  const idx = [...picked];
+  const ok = await commit((d) => { d.l[0] = encode(reroll(e, idx)); d.s = 1; return d; });
+  if (ok) { picked.clear(); view = "result"; paint(); }
+}
+const toggleShown = () => commit((d) => { d.s = d.s ? 0 : 1; return d; });
+const startPick = () => { picked = new Set(); pickBase = meta[KEY].l[0]; view = "pick"; paint(); };
+const cancelPick = () => { picked.clear(); view = "result"; paint(); };
+
+// ---------- ui pieces ----------
+function die(v, kind, onclick, selected) {
+  const el = h("div", { className: `die ${kind}${onclick ? " pickable" : ""}${selected ? " sel" : ""}`, title: String(v) });
+  el.setAttribute("role", onclick ? "button" : "img");
+  el.setAttribute("aria-label", `Die showing ${v}${selected ? ", selected" : ""}`);
+  if (onclick) { el.tabIndex = 0; el.setAttribute("aria-pressed", String(!!selected)); el.onclick = onclick; el.onkeydown = (k) => { if (k.key === " " || k.key === "Enter") { k.preventDefault(); onclick(); } }; }
+  for (let i = 0; i < 9; i++) el.append(h("i", { className: PIPS[v].includes(i) ? "p" : "" }));
+  return el;
+}
+function field(label, hint, value, max) {
+  const input = h("input", { type: "number", min: 0, max, value, step: 1, inputMode: "numeric" });
+  return { input, el: h("label", { className: "f" }, h("span", {}, label, hint ? h("small", { textContent: hint }) : null), input) };
+}
+function setupView(e) {
+  const f = {
+    stale: field("Stale dice", "Locked from the start, can't be re-rolled", cfg.stale, MAX_DICE),
+    pool: field("Re-rollable dice", "Can be re-rolled later", cfg.pool, MAX_DICE),
+    lim: field("Re-rolls allowed", "Number of re-roll attempts", cfg.lim, MAX_REROLLS),
+  };
+  const inputs = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.input]));
+  const go = h("button", { className: "primary", textContent: "Roll", disabled: busy, onclick: () => doRoll(inputs) });
+  for (const i of Object.values(inputs)) i.onkeydown = (k) => { if (k.key === "Enter") go.click(); };
+  return [f.stale.el, f.pool.el, f.lim.el,
+    h("div", { className: "row" }, go, e ? h("button", { textContent: "Back to last roll", onclick: () => { view = "result"; paint(); } }) : null)];
+}
+function resultView(e, data) {
+  const cur = current(e), left = rerollsLeft(e), picking = view === "pick";
+  const toggle = (i) => () => { picked.has(i) ? picked.delete(i) : picked.add(i); paint(); };
+  const out = [];
+  if (e.stale.length) out.push(h("div", {}, h("div", { className: "mut", textContent: "Stale" }), h("div", { className: "group" }, e.stale.map((v) => die(v, "stale")))));
+  const res = [cur.frozen.map((v) => die(v, "frozen"))];
+  if (cur.frozen.length && cur.active.length) res.push(h("div", { className: "spacer" }));
+  res.push(cur.active.map((v, i) => die(v, "active", picking ? toggle(i) : null, picked.has(i))));
+  out.push(h("div", {}, h("div", { className: "mut", textContent: "Result" }), h("div", { className: "group" }, res)));
+  if (picking) {
+    out.push(h("div", { className: "mut", textContent: "Select the dice to re-roll. Dice you leave unselected are kept for good." }),
+      h("div", { className: "row" },
+        h("button", { className: "primary", textContent: `Confirm re-roll (${picked.size})`, disabled: busy || !picked.size, onclick: confirmReroll }),
+        h("button", { textContent: "Cancel", disabled: busy, onclick: cancelPick })));
+  } else {
+    out.push(h("div", { className: "row" },
+      h("button", { className: "primary", textContent: "Re-roll dice", disabled: busy || left < 1 || !cur.active.length, onclick: startPick }),
+      h("button", { textContent: "New roll", disabled: busy, onclick: () => { view = "setup"; paint(); } }),
+      h("button", { className: "link", textContent: data.s ? "Clear dice from table" : "Show dice on table", disabled: busy, onclick: toggleShown })));
+  }
+  return out;
+}
+const bracket = (vals, boldFrom = Infinity) =>
+  h("span", {}, "[", vals.map((v, i) => [i ? ", " : "", i >= boldFrom ? h("b", { textContent: v }) : String(v)]), "]");
+function entryEl(e, name, colour) {
+  const time = new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const el = h("div", { className: "entry" },
+    h("div", {}, h("b", { className: "n", textContent: name || "Player" }), h("span", { className: "mut", textContent: `  ${time}  ·  up to ${e.lim} re-roll${e.lim === 1 ? "" : "s"}` })),
+    e.steps.map((s, i) => h("div", { className: "step" }, h("span", { className: "mut", textContent: i ? `Re-roll ${i}  ` : "Roll  " }),
+      bracket(e.stale), bracket(s.frozen.concat(s.active), s.frozen.length))));
+  el.style.setProperty("--c", colour || "#888");
+  return el;
+}
+
+// ---------- paint ----------
+function paint() {
+  const data = meta[KEY];
+  const e = data?.l?.[0] ? decode(data.l[0]) : null;
+  if (view === null) view = e ? "result" : "setup";
+  if (!e) view = "setup";
+  if (view === "pick" && (data.l[0] !== pickBase || rerollsLeft(e) < 1)) { picked.clear(); view = "result"; }
+
+  $("err").textContent = error;
+  $("err").classList.toggle("on", !!error);
+  $("status").textContent = busy ? "Saving…" : "";
+  $("main").replaceChildren(...(view === "setup" ? setupView(e) : resultView(e, data)));
+
+  const players = Object.entries(meta).filter(([k, d]) => k.startsWith(PREFIX) && Array.isArray(d?.l));
+  const sel = $("filter");
+  if (logFilter !== "all" && !players.some(([k]) => k === logFilter)) logFilter = "all";
+  sel.replaceChildren(h("option", { value: "all", textContent: "All players" }), ...players.map(([k, d]) => h("option", { value: k, textContent: d.n || "Player" })));
+  sel.value = logFilter;
+  const rows = [];
+  for (const [k, d] of players) if (logFilter === "all" || logFilter === k)
+    for (const s of d.l) { const r = decode(s); if (r) rows.push({ r, n: d.n, c: d.c }); }
+  rows.sort((a, b) => b.r.t - a.r.t);
+  $("log").replaceChildren(...(rows.length ? rows.map((x) => entryEl(x.r, x.n, x.c)) : [h("div", { className: "mut", textContent: "No rolls yet." })]));
+}
+$("filter").onchange = (ev) => { logFilter = ev.target.value; paint(); };
+
+function applyTheme(t) {
+  const r = document.documentElement.style;
+  r.setProperty("--bg", t.background.default); r.setProperty("--fg", t.text.primary);
+  r.setProperty("--mut", t.text.secondary); r.setProperty("--pri", t.primary.main); r.setProperty("--onpri", t.primary.contrastText);
+}
+OBR.onReady(async () => {
+  if (!OBR.player.id) { error = "Couldn't read your player ID, so rolls can't be saved."; }
+  KEY = PREFIX + OBR.player.id;
+  meta = await OBR.room.getMetadata();
+  try { applyTheme(await OBR.theme.getTheme()); OBR.theme.onChange(applyTheme); } catch {}
+  const colour = (c) => document.documentElement.style.setProperty("--me", c);
+  colour(await OBR.player.getColor());
+  OBR.player.onChange((p) => colour(p.color));
+  OBR.room.onMetadataChange((m) => { meta = m; paint(); });
+  paint();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DicePocker background</title>
+<script type="module">
+// Runs for everyone in the room. Draws each player's latest roll on the map as local-only items
+// (nothing is saved into the scene, and no permissions are needed).
+import OBR, { buildShape, buildText } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
+import { decode, layout, rerollsLeft } from "./logic.js";
+
+const PREFIX = "com.dicepocker/p/";
+const LOOK = {
+  stale:  { fill: "#8a93a6", stroke: "#2b2f3a", ink: "#ffffff", sw: 3 },
+  frozen: { fill: "#e6e1d3", stroke: "#6b6b6b", ink: "#2a2a2a", sw: 3 },
+  active: { fill: "#ffffff", stroke: null,      ink: "#000000", sw: 6 }, // stroke = player colour
+};
+const drawn = new Map(); // player key -> { sig, ids }
+let chain = Promise.resolve();
+const queue = (fn) => (chain = chain.then(fn).catch((e) => console.error("DicePocker:", e)));
+
+const common = (item, x, y) => {
+  item.position = { x, y };
+  item.layer = "ATTACHMENT";
+  item.locked = true;
+  item.disableHit = true; // clicks pass through to the map
+  return item;
+};
+function box(x, y, s, look, stroke) {
+  const b = common(buildShape().width(s).height(s).shapeType("RECTANGLE").build(), x, y);
+  b.style = { fillColor: look.fill, fillOpacity: 1, strokeColor: stroke, strokeOpacity: 1, strokeWidth: look.sw, strokeDash: [] };
+  return b;
+}
+function text(str, x, y, w, h, style) {
+  const t = common(buildText().richText([{ type: "paragraph", children: [{ text: str }] }]).build(), x, y);
+  t.text = {
+    ...t.text, type: "PLAIN", plainText: str, width: w, height: h,
+    style: {
+      fillColor: "#000", fillOpacity: 1, strokeColor: "#000", strokeOpacity: 1, strokeWidth: 0,
+      textAlign: "CENTER", textAlignVertical: "MIDDLE", fontFamily: "Roboto",
+      fontSize: 16, fontWeight: 400, lineHeight: 1, padding: 0, ...style,
+    },
+  };
+  return t;
+}
+function build(e, data, size) {
+  const L = layout(e, size);
+  const x0 = e.x - L.width / 2, y0 = e.y - L.height / 2;
+  const colour = data.c || "#e5484d";
+  const items = [];
+  const left = rerollsLeft(e);
+  items.push(text(`${data.n || "Player"}  ·  re-rolls left: ${left}`, x0, y0 - size * 0.6, Math.max(L.width, size * 6), size * 0.5, {
+    textAlign: "LEFT", fillColor: colour, strokeColor: "#000", strokeWidth: 3, fontSize: size * 0.3, fontWeight: 700,
+  }));
+  for (const c of L.cells) {
+    const look = LOOK[c.kind];
+    items.push(box(x0 + c.x, y0 + c.y, size, look, look.stroke || colour));
+    items.push(text(String(c.v), x0 + c.x, y0 + c.y, size, size, { fillColor: look.ink, fontSize: size * 0.62, fontWeight: 700 }));
+  }
+  return items;
+}
+async function drop(key) {
+  const d = drawn.get(key);
+  drawn.delete(key);
+  if (d?.ids.length) await OBR.scene.local.deleteItems(d.ids);
+}
+async function sync() {
+  if (!(await OBR.scene.isReady())) { drawn.clear(); return; }
+  const meta = await OBR.room.getMetadata();
+  const size = Math.round(Math.max(48, (await OBR.scene.grid.getDpi()) * 0.75));
+  const live = new Set();
+  for (const [key, data] of Object.entries(meta)) {
+    if (!key.startsWith(PREFIX) || !data?.l?.length) continue;
+    live.add(key);
+    const sig = [data.s, data.n, data.c, size, data.l[0]].join("|");
+    if (drawn.get(key)?.sig === sig) continue;
+    await drop(key);
+    const e = data.s ? decode(data.l[0]) : null;
+    if (!e) continue;
+    const items = build(e, data, size);
+    await OBR.scene.local.addItems(items);
+    drawn.set(key, { sig, ids: items.map((i) => i.id) });
+  }
+  for (const key of [...drawn.keys()]) if (!live.has(key)) await drop(key);
+}
+
+OBR.onReady(() => {
+  const run = () => queue(sync);
+  OBR.room.onMetadataChange(run);
+  OBR.scene.grid.onChange(run);
+  OBR.scene.onReadyChange((ready) => { drawn.clear(); if (ready) run(); }); // local items vanish with the scene
+  run();
+});
+</script>
