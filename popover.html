@@ -21,6 +21,7 @@ h1{margin:0;font-size:16px;font-weight:700}
 .spacer{width:12px;height:44px;border-left:2px solid var(--line);margin:0 4px}
 label.f{display:flex;justify-content:space-between;align-items:center;gap:12px}
 label.f small{display:block;color:var(--mut)}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--pri);cursor:pointer}
 input[type=number]{width:72px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);font:inherit;text-align:right}
 button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
 button.primary{background:var(--pri);color:var(--onpri);border-color:transparent;font-weight:700}
@@ -72,9 +73,11 @@ const $ = (id) => document.getElementById(id);
 let meta = {}, KEY = "", view = null, busy = false, error = "", logFilter = "all";
 let picked = new Set(), pickBase = "";
 let isGM = false, confirmClear = false, confirmTimer = 0;
-const defaults = { stale: 0, pool: 6, lim: 1 };
+const defaults = { stale: 1, pool: 6, lim: 1 };
 let cfg = (() => { try { return { ...defaults, ...JSON.parse(localStorage.getItem("dicepocker.cfg")) }; } catch { return { ...defaults }; } })();
-const saveCfg = () => { try { localStorage.setItem("dicepocker.cfg", JSON.stringify(cfg)); } catch {} };
+cfg.stale = Math.max(1, Math.trunc(+cfg.stale) || 1);
+cfg.useStale = false; // stale dice start switched off every time and are not remembered between sessions
+const saveCfg = () => { try { localStorage.setItem("dicepocker.cfg", JSON.stringify({ stale: cfg.stale, pool: cfg.pool, lim: cfg.lim })); } catch {} };
 
 // ---------- data ----------
 async function anchor() {
@@ -99,11 +102,14 @@ async function commit(mutate) {
   } finally { busy = false; paint(); }
 }
 async function doRoll(f) {
-  cfg = { stale: +f.stale.value || 0, pool: +f.pool.value || 0, lim: +f.lim.value || 0 };
+  const useStale = f.useStale.checked;
+  const staleN = Math.trunc(+f.stale.value) || 0;
+  cfg = { useStale, stale: Math.max(1, staleN), pool: Math.trunc(+f.pool.value) || 0, lim: Math.trunc(+f.lim.value) || 0 };
+  if (useStale && staleN < 1) { error = "Stale dice are switched on, so enter at least 1 (or switch them off)."; paint(); return; }
   saveCfg();
   const a = await anchor();
   const ok = await commit((d) => {
-    const e = newRoll({ ...cfg, x: a.x, y: a.y });
+    const e = newRoll({ stale: useStale ? staleN : 0, pool: cfg.pool, lim: cfg.lim, x: a.x, y: a.y });
     d.l = trimLog([encode(e), ...d.l]);
     d.s = 1;
     return d;
@@ -119,7 +125,7 @@ async function confirmReroll() {
 const toggleShown = () => commit((d) => { d.s = d.s ? 0 : 1; return d; });
 const startPick = () => { picked = new Set(); pickBase = meta[KEY].l[0]; view = "pick"; paint(); };
 const cancelPick = () => { picked.clear(); view = "result"; paint(); };
-// GM only (UI-level). Empties every player's log, which also removes their dice from the table.
+// GM only (UI-level). Deletes every player's stored log from the room data, which also removes their dice from the table.
 async function clearAll() {
   if (!confirmClear) {
     confirmClear = true;
@@ -132,7 +138,7 @@ async function clearAll() {
   busy = true; error = ""; paint();
   try {
     const emptied = {};
-    for (const k of Object.keys(meta)) if (k.startsWith(PREFIX)) emptied[k] = { s: 0, l: [] };
+    for (const k of Object.keys(meta)) if (k.startsWith(PREFIX)) emptied[k] = null; // replaces the stored value outright (nothing left to merge with)
     await OBR.room.setMetadata(emptied);
     meta = { ...meta, ...emptied };
   } catch (err) { error = err?.message || String(err); }
@@ -148,20 +154,27 @@ function die(v, kind, onclick, selected) {
   for (let i = 0; i < 9; i++) el.append(h("i", { className: PIPS[v].includes(i) ? "p" : "" }));
   return el;
 }
-function field(label, hint, value, max) {
-  const input = h("input", { type: "number", min: 0, max, value, step: 1, inputMode: "numeric" });
+function field(label, hint, value, max, min = 0) {
+  const input = h("input", { type: "number", min, max, value, step: 1, inputMode: "numeric" });
   return { input, el: h("label", { className: "f" }, h("span", {}, label, hint ? h("small", { textContent: hint }) : null), input) };
 }
 function setupView(e) {
+  const useStale = h("input", { type: "checkbox", checked: cfg.useStale });
+  useStale.setAttribute("role", "switch");
   const f = {
-    stale: field("Stale dice", "Locked from the start, can't be re-rolled", cfg.stale, MAX_DICE),
+    stale: field("Number of stale dice", "At least 1", Math.max(1, cfg.stale), MAX_DICE, 1),
     pool: field("Re-rollable dice", "Can be re-rolled later", cfg.pool, MAX_DICE),
     lim: field("Re-rolls allowed", "Number of re-roll attempts", cfg.lim, MAX_REROLLS),
   };
+  const staleBox = h("div", {}, f.stale.el);
+  staleBox.hidden = !cfg.useStale;
+  useStale.onchange = () => { cfg.useStale = useStale.checked; staleBox.hidden = !cfg.useStale; };
   const inputs = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.input]));
-  const go = h("button", { className: "primary", textContent: "Roll", disabled: busy, onclick: () => doRoll(inputs) });
+  const go = h("button", { className: "primary", textContent: "Roll", disabled: busy, onclick: () => doRoll({ ...inputs, useStale }) });
   for (const i of Object.values(inputs)) i.onkeydown = (k) => { if (k.key === "Enter") go.click(); };
-  return [f.stale.el, f.pool.el, f.lim.el,
+  return [
+    h("label", { className: "f" }, h("span", {}, "Stale dice", h("small", { textContent: "Locked from the start, can't be re-rolled" })), useStale),
+    staleBox, f.pool.el, f.lim.el,
     h("div", { className: "row" }, go, e ? h("button", { textContent: "Back to last roll", onclick: () => { view = "result"; paint(); } }) : null)];
 }
 function resultView(e, data) {
@@ -193,7 +206,7 @@ function entryEl(e, name, colour) {
   const el = h("div", { className: "entry" },
     h("div", {}, h("b", { className: "n", textContent: name || "Player" }), h("span", { className: "mut", textContent: `  ${time}  ·  up to ${e.lim} re-roll${e.lim === 1 ? "" : "s"}` })),
     e.steps.map((s, i) => h("div", { className: "step" }, h("span", { className: "mut", textContent: i ? `Re-roll ${i}  ` : "Roll  " }),
-      bracket(e.stale), bracket(s.frozen.concat(s.active), s.frozen.length))));
+      e.stale.length ? bracket(e.stale) : null, bracket(s.frozen.concat(s.active), s.frozen.length))));
   el.style.setProperty("--c", colour || "#888");
   return el;
 }
