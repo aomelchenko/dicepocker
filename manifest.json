@@ -1,15 +1,15 @@
 {
   "name": "DicePocker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "manifest_version": 1,
   "description": "D6 pool roller: locked dice, picked re-rolls, shared roll log.",
-  "icon": "icon.svg",
+  "icon": "https://aomelchenko.github.io/dicepocker/icon.svg",
   "action": {
     "title": "DicePocker",
-    "icon": "icon.svg",
-    "popover": "popover.html",
+    "icon": "https://aomelchenko.github.io/dicepocker/icon.svg",
+    "popover": "https://aomelchenko.github.io/dicepocker/popover.html",
     "width": 400,
     "height": 640
   },
-  "background_url": "background.html"
+  "background_url": "https://aomelchenko.github.io/dicepocker/background.html"
 }
