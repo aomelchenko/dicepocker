@@ -1,6 +1,6 @@
 {
   "name": "DicePocker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "manifest_version": 1,
   "description": "D6 pool roller: locked dice, picked re-rolls, shared roll log.",
   "icon": "https://aomelchenko.github.io/dicepocker/icon.svg",

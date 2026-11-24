@@ -1,224 +1,265 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DicePocker</title>
-<style>
-:root{--bg:#222639;--fg:#fff;--mut:#a9aec4;--pri:#bb99ff;--onpri:#000;--me:#bb99ff;
-  --line:color-mix(in srgb,var(--fg) 16%,transparent);--card:color-mix(in srgb,var(--fg) 7%,transparent)}
-*{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--bg);color:var(--fg);
-  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-h1{margin:0;font-size:16px;font-weight:700}
-.mut{color:var(--mut)}
-#err{display:none;padding:8px 10px;border-radius:8px;background:#7a1f2b;color:#fff}
-#err.on{display:block}
-.card{padding:12px;border-radius:10px;background:var(--card);display:flex;flex-direction:column;gap:10px}
-.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.spacer{width:12px;height:44px;border-left:2px solid var(--line);margin:0 4px}
-label.f{display:flex;justify-content:space-between;align-items:center;gap:12px}
-label.f small{display:block;color:var(--mut)}
-input[type=number]{width:72px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);font:inherit;text-align:right}
-button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
-button.primary{background:var(--pri);color:var(--onpri);border-color:transparent;font-weight:700}
-button.link{border:0;padding:4px 0;color:var(--mut);text-decoration:underline}
-button:disabled{opacity:.45;cursor:default}
-button:focus-visible,input:focus-visible,select:focus-visible,.die:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
-.die{width:44px;height:44px;flex:none;border-radius:9px;background:#fff;border:2px solid #333;
-  display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);place-items:center;padding:6px;transition:transform .1s}
-.die i{width:7px;height:7px;border-radius:50%}
-.die i.p{background:#111}
-.die.stale{background:#8a93a6;border-color:#2b2f3a}.die.stale i.p{background:#fff}
-.die.frozen{background:#e6e1d3;border-color:#6b6b6b}
-.die.active{border:3px solid var(--me)}
-.die.pickable{cursor:pointer}
-.die.sel{outline:3px solid var(--pri);outline-offset:2px;transform:translateY(-4px)}
-#logwrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
-#log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}
-select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:60%}
-.entry{padding:8px 10px;border-radius:8px;background:var(--card);border-left:4px solid var(--c,#888)}
-.entry .step{font-variant-numeric:tabular-nums}
-.entry b.n{font-weight:700;color:var(--fg)}
-.step b{color:var(--fg)}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
-</style>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title></title>
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="2685.7">
+  <style type="text/css">
+    body {background-color: #1a1c2b}
+    span.s1 {font-kerning: none}
+  </style>
 </head>
 <body>
-<div class="row" style="justify-content:space-between"><h1>DicePocker</h1><span id="status" class="mut"></span></div>
-<div id="err" role="alert"></div>
-<div id="main" class="card"></div>
-<div id="logwrap">
-  <div class="row" style="justify-content:space-between"><strong>Roll log</strong><select id="filter" aria-label="Filter log by player"></select></div>
-  <div id="log"></div>
-</div>
-
-<script type="module">
-import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
-import { MAX_DICE, MAX_REROLLS, newRoll, reroll, rerollsLeft, current, encode, decode, trimLog } from "./logic.js";
-
-const PREFIX = "com.dicepocker/p/";
-const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
-const h = (tag, props = {}, ...kids) => {
-  const el = Object.assign(document.createElement(tag), props);
-  el.append(...kids.flat(Infinity).filter((k) => k != null));
-  return el;
-};
-const $ = (id) => document.getElementById(id);
-
-let meta = {}, KEY = "", view = null, busy = false, error = "", logFilter = "all";
-let picked = new Set(), pickBase = "";
-const defaults = { stale: 0, pool: 6, lim: 1 };
-let cfg = (() => { try { return { ...defaults, ...JSON.parse(localStorage.getItem("dicepocker.cfg")) }; } catch { return { ...defaults }; } })();
-const saveCfg = () => { try { localStorage.setItem("dicepocker.cfg", JSON.stringify(cfg)); } catch {} };
-
-// ---------- data ----------
-async function anchor() {
-  try {
-    const [w, hh] = await Promise.all([OBR.viewport.getWidth(), OBR.viewport.getHeight()]);
-    return await OBR.viewport.inverseTransformPoint({ x: w / 2, y: hh / 2 });
-  } catch { return { x: 0, y: 0 }; }
-}
-async function commit(mutate) {
-  busy = true; error = ""; paint();
-  try {
-    const cur = meta[KEY] || {};
-    const next = mutate({ ...cur, l: [...(cur.l || [])] });
-    next.n = await OBR.player.getName();
-    next.c = await OBR.player.getColor();
-    await OBR.room.setMetadata({ [KEY]: next });
-    meta = { ...meta, [KEY]: next };
-    return true;
-  } catch (err) {
-    error = err?.message || String(err);
-    return false;
-  } finally { busy = false; paint(); }
-}
-async function doRoll(f) {
-  cfg = { stale: +f.stale.value || 0, pool: +f.pool.value || 0, lim: +f.lim.value || 0 };
-  saveCfg();
-  const a = await anchor();
-  const ok = await commit((d) => {
-    const e = newRoll({ ...cfg, x: a.x, y: a.y });
-    d.l = trimLog([encode(e), ...d.l]);
-    d.s = 1;
-    return d;
-  });
-  if (ok) { view = "result"; paint(); }
-}
-async function confirmReroll() {
-  const e = decode(meta[KEY].l[0]);
-  const idx = [...picked];
-  const ok = await commit((d) => { d.l[0] = encode(reroll(e, idx)); d.s = 1; return d; });
-  if (ok) { picked.clear(); view = "result"; paint(); }
-}
-const toggleShown = () => commit((d) => { d.s = d.s ? 0 : 1; return d; });
-const startPick = () => { picked = new Set(); pickBase = meta[KEY].l[0]; view = "pick"; paint(); };
-const cancelPick = () => { picked.clear(); view = "result"; paint(); };
-
-// ---------- ui pieces ----------
-function die(v, kind, onclick, selected) {
-  const el = h("div", { className: `die ${kind}${onclick ? " pickable" : ""}${selected ? " sel" : ""}`, title: String(v) });
-  el.setAttribute("role", onclick ? "button" : "img");
-  el.setAttribute("aria-label", `Die showing ${v}${selected ? ", selected" : ""}`);
-  if (onclick) { el.tabIndex = 0; el.setAttribute("aria-pressed", String(!!selected)); el.onclick = onclick; el.onkeydown = (k) => { if (k.key === " " || k.key === "Enter") { k.preventDefault(); onclick(); } }; }
-  for (let i = 0; i < 9; i++) el.append(h("i", { className: PIPS[v].includes(i) ? "p" : "" }));
-  return el;
-}
-function field(label, hint, value, max) {
-  const input = h("input", { type: "number", min: 0, max, value, step: 1, inputMode: "numeric" });
-  return { input, el: h("label", { className: "f" }, h("span", {}, label, hint ? h("small", { textContent: hint }) : null), input) };
-}
-function setupView(e) {
-  const f = {
-    stale: field("Stale dice", "Locked from the start, can't be re-rolled", cfg.stale, MAX_DICE),
-    pool: field("Re-rollable dice", "Can be re-rolled later", cfg.pool, MAX_DICE),
-    lim: field("Re-rolls allowed", "Number of re-roll attempts", cfg.lim, MAX_REROLLS),
-  };
-  const inputs = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.input]));
-  const go = h("button", { className: "primary", textContent: "Roll", disabled: busy, onclick: () => doRoll(inputs) });
-  for (const i of Object.values(inputs)) i.onkeydown = (k) => { if (k.key === "Enter") go.click(); };
-  return [f.stale.el, f.pool.el, f.lim.el,
-    h("div", { className: "row" }, go, e ? h("button", { textContent: "Back to last roll", onclick: () => { view = "result"; paint(); } }) : null)];
-}
-function resultView(e, data) {
-  const cur = current(e), left = rerollsLeft(e), picking = view === "pick";
-  const toggle = (i) => () => { picked.has(i) ? picked.delete(i) : picked.add(i); paint(); };
-  const out = [];
-  if (e.stale.length) out.push(h("div", {}, h("div", { className: "mut", textContent: "Stale" }), h("div", { className: "group" }, e.stale.map((v) => die(v, "stale")))));
-  const res = [cur.frozen.map((v) => die(v, "frozen"))];
-  if (cur.frozen.length && cur.active.length) res.push(h("div", { className: "spacer" }));
-  res.push(cur.active.map((v, i) => die(v, "active", picking ? toggle(i) : null, picked.has(i))));
-  out.push(h("div", {}, h("div", { className: "mut", textContent: "Result" }), h("div", { className: "group" }, res)));
-  if (picking) {
-    out.push(h("div", { className: "mut", textContent: "Select the dice to re-roll. Dice you leave unselected are kept for good." }),
-      h("div", { className: "row" },
-        h("button", { className: "primary", textContent: `Confirm re-roll (${picked.size})`, disabled: busy || !picked.size, onclick: confirmReroll }),
-        h("button", { textContent: "Cancel", disabled: busy, onclick: cancelPick })));
-  } else {
-    out.push(h("div", { className: "row" },
-      h("button", { className: "primary", textContent: "Re-roll dice", disabled: busy || left < 1 || !cur.active.length, onclick: startPick }),
-      h("button", { textContent: "New roll", disabled: busy, onclick: () => { view = "setup"; paint(); } }),
-      h("button", { className: "link", textContent: data.s ? "Clear dice from table" : "Show dice on table", disabled: busy, onclick: toggleShown })));
-  }
-  return out;
-}
-const bracket = (vals, boldFrom = Infinity) =>
-  h("span", {}, "[", vals.map((v, i) => [i ? ", " : "", i >= boldFrom ? h("b", { textContent: v }) : String(v)]), "]");
-function entryEl(e, name, colour) {
-  const time = new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const el = h("div", { className: "entry" },
-    h("div", {}, h("b", { className: "n", textContent: name || "Player" }), h("span", { className: "mut", textContent: `  ${time}  ·  up to ${e.lim} re-roll${e.lim === 1 ? "" : "s"}` })),
-    e.steps.map((s, i) => h("div", { className: "step" }, h("span", { className: "mut", textContent: i ? `Re-roll ${i}  ` : "Roll  " }),
-      bracket(e.stale), bracket(s.frozen.concat(s.active), s.frozen.length))));
-  el.style.setProperty("--c", colour || "#888");
-  return el;
-}
-
-// ---------- paint ----------
-function paint() {
-  const data = meta[KEY];
-  const e = data?.l?.[0] ? decode(data.l[0]) : null;
-  if (view === null) view = e ? "result" : "setup";
-  if (!e) view = "setup";
-  if (view === "pick" && (data.l[0] !== pickBase || rerollsLeft(e) < 1)) { picked.clear(); view = "result"; }
-
-  $("err").textContent = error;
-  $("err").classList.toggle("on", !!error);
-  $("status").textContent = busy ? "Saving…" : "";
-  $("main").replaceChildren(...(view === "setup" ? setupView(e) : resultView(e, data)));
-
-  const players = Object.entries(meta).filter(([k, d]) => k.startsWith(PREFIX) && Array.isArray(d?.l));
-  const sel = $("filter");
-  if (logFilter !== "all" && !players.some(([k]) => k === logFilter)) logFilter = "all";
-  sel.replaceChildren(h("option", { value: "all", textContent: "All players" }), ...players.map(([k, d]) => h("option", { value: k, textContent: d.n || "Player" })));
-  sel.value = logFilter;
-  const rows = [];
-  for (const [k, d] of players) if (logFilter === "all" || logFilter === k)
-    for (const s of d.l) { const r = decode(s); if (r) rows.push({ r, n: d.n, c: d.c }); }
-  rows.sort((a, b) => b.r.t - a.r.t);
-  $("log").replaceChildren(...(rows.length ? rows.map((x) => entryEl(x.r, x.n, x.c)) : [h("div", { className: "mut", textContent: "No rolls yet." })]));
-}
-$("filter").onchange = (ev) => { logFilter = ev.target.value; paint(); };
-
-function applyTheme(t) {
-  const r = document.documentElement.style;
-  r.setProperty("--bg", t.background.default); r.setProperty("--fg", t.text.primary);
-  r.setProperty("--mut", t.text.secondary); r.setProperty("--pri", t.primary.main); r.setProperty("--onpri", t.primary.contrastText);
-}
-OBR.onReady(async () => {
-  if (!OBR.player.id) { error = "Couldn't read your player ID, so rolls can't be saved."; }
-  KEY = PREFIX + OBR.player.id;
-  meta = await OBR.room.getMetadata();
-  try { applyTheme(await OBR.theme.getTheme()); OBR.theme.onChange(applyTheme); } catch {}
-  const colour = (c) => document.documentElement.style.setProperty("--me", c);
-  colour(await OBR.player.getColor());
-  OBR.player.onChange((p) => colour(p.color));
-  OBR.room.onMetadataChange((m) => { meta = m; paint(); });
-  paint();
-});
-</script>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;!doctype html&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;html lang="en"&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;head&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;meta charset="utf-8"&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;title&gt;DicePocker&lt;/title&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;style&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>:root{--bg:#222639;--fg:#fff;--mut:#a9aec4;--pri:#bb99ff;--onpri:#000;--me:#bb99ff;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>--line:color-mix(in srgb,var(--fg) 16%,transparent);--card:color-mix(in srgb,var(--fg) 7%,transparent)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>*{box-sizing:border-box}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>html,body{height:100%;margin:0}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>body{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--bg);color:var(--fg);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>h1{margin:0;font-size:16px;font-weight:700}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.mut{color:var(--mut)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>#err{display:none;padding:8px 10px;border-radius:8px;background:#7a1f2b;color:#fff}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>#err.on{display:block}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.card{padding:12px;border-radius:10px;background:var(--card);display:flex;flex-direction:column;gap:10px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.spacer{width:12px;height:44px;border-left:2px solid var(--line);margin:0 4px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>label.f{display:flex;justify-content:space-between;align-items:center;gap:12px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>label.f small{display:block;color:var(--mut)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>input[type=number]{width:72px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);font:inherit;text-align:right}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>button.primary{background:var(--pri);color:var(--onpri);border-color:transparent;font-weight:700}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>button.link{border:0;padding:4px 0;color:var(--mut);text-decoration:underline}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>button.danger{background:#7a1f2b;color:#fff;border-color:transparent;padding:4px 10px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>button:disabled{opacity:.45;cursor:default}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>button:focus-visible,input:focus-visible,select:focus-visible,.die:focus-visible{outline:2px solid var(--pri);outline-offset:2px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die{width:44px;height:44px;flex:none;border-radius:9px;background:#fff;border:2px solid #333;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);place-items:center;padding:6px;transition:transform .1s}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die i{width:7px;height:7px;border-radius:50%}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die i.p{background:#111}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die.stale{background:#8a93a6;border-color:#2b2f3a}.die.stale i.p{background:#fff}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die.frozen{background:#e6e1d3;border-color:#6b6b6b}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die.active{border:3px solid var(--me)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die.pickable{cursor:pointer}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.die.sel{outline:3px solid var(--pri);outline-offset:2px;transform:translateY(-4px)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>#logwrap{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>#log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);max-width:60%}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.entry{padding:8px 10px;border-radius:8px;background:var(--card);border-left:4px solid var(--c,#888)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.entry .step{font-variant-numeric:tabular-nums}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.entry b.n{font-weight:700;color:var(--fg)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>.step b{color:var(--fg)}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>@media (prefers-reduced-motion:reduce){*{transition:none!important}}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;/style&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;/head&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;body&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;div class="row" style="justify-content:space-between"&gt;&lt;h1&gt;DicePocker&lt;/h1&gt;&lt;span id="status" class="mut"&gt;&lt;/span&gt;&lt;/div&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;div id="err" role="alert"&gt;&lt;/div&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;div id="main" class="card"&gt;&lt;/div&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;div id="logwrap"&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>&lt;div class="row" style="justify-content:space-between;flex-wrap:nowrap"&gt;&lt;strong&gt;Roll log&lt;/strong&gt;&lt;span class="row" style="flex-wrap:nowrap;justify-content:flex-end"&gt;&lt;span id="gm"&gt;&lt;/span&gt;&lt;select id="filter" aria-label="Filter log by player"&gt;&lt;/select&gt;&lt;/span&gt;&lt;/div&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>&lt;div id="log"&gt;&lt;/div&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;/div&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;script type="module"&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>import { MAX_DICE, MAX_REROLLS, newRoll, reroll, rerollsLeft, current, encode, decode, trimLog } from "./logic.js";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const PREFIX = "com.dicepocker/p/";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const h = (tag, props = {}, ...kids) =&gt; {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const el = Object.assign(document.createElement(tag), props);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>el.append(...kids.flat(Infinity).filter((k) =&gt; k != null));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>return el;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>};</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const $ = (id) =&gt; document.getElementById(id);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>let meta = {}, KEY = "", view = null, busy = false, error = "", logFilter = "all";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>let picked = new Set(), pickBase = "";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>let isGM = false, confirmClear = false, confirmTimer = 0;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const defaults = { stale: 0, pool: 6, lim: 1 };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>let cfg = (() =&gt; { try { return { ...defaults, ...JSON.parse(localStorage.getItem("dicepocker.cfg")) }; } catch { return { ...defaults }; } })();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const saveCfg = () =&gt; { try { localStorage.setItem("dicepocker.cfg", JSON.stringify(cfg)); } catch {} };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>// ---------- data ----------</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>async function anchor() {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>try {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>const [w, hh] = await Promise.all([OBR.viewport.getWidth(), OBR.viewport.getHeight()]);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>return await OBR.viewport.inverseTransformPoint({ x: w / 2, y: hh / 2 });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>} catch { return { x: 0, y: 0 }; }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>async function commit(mutate) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>busy = true; error = ""; paint();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>try {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>const cur = meta[KEY] || {};</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>const next = mutate({ ...cur, l: [...(cur.l || [])] });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>next.n = await OBR.player.getName();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>next.c = await OBR.player.getColor();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>await OBR.room.setMetadata({ [KEY]: next });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>meta = { ...meta, [KEY]: next };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>return true;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>} catch (err) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>error = err?.message || String(err);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>return false;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>} finally { busy = false; paint(); }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>async function doRoll(f) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>cfg = { stale: +f.stale.value || 0, pool: +f.pool.value || 0, lim: +f.lim.value || 0 };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>saveCfg();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const a = await anchor();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const ok = await commit((d) =&gt; {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>const e = newRoll({ ...cfg, x: a.x, y: a.y });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>d.l = trimLog([encode(e), ...d.l]);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>d.s = 1;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>return d;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>});</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (ok) { view = "result"; paint(); }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>async function confirmReroll() {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const e = decode(meta[KEY].l[0]);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const idx = [...picked];</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const ok = await commit((d) =&gt; { d.l[0] = encode(reroll(e, idx)); d.s = 1; return d; });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (ok) { picked.clear(); view = "result"; paint(); }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const toggleShown = () =&gt; commit((d) =&gt; { d.s = d.s ? 0 : 1; return d; });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const startPick = () =&gt; { picked = new Set(); pickBase = meta[KEY].l[0]; view = "pick"; paint(); };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const cancelPick = () =&gt; { picked.clear(); view = "result"; paint(); };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>// GM only (UI-level). Empties every player's log, which also removes their dice from the table.</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>async function clearAll() {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (!confirmClear) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>confirmClear = true;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>clearTimeout(confirmTimer);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>confirmTimer = setTimeout(() =&gt; { confirmClear = false; paint(); }, 4000);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>paint();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>return;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>clearTimeout(confirmTimer); confirmClear = false;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>busy = true; error = ""; paint();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>try {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>const emptied = {};</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>for (const k of Object.keys(meta)) if (k.startsWith(PREFIX)) emptied[k] = { s: 0, l: [] };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>await OBR.room.setMetadata(emptied);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>meta = { ...meta, ...emptied };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>} catch (err) { error = err?.message || String(err); }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>finally { busy = false; picked.clear(); paint(); }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>// ---------- ui pieces ----------</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function die(v, kind, onclick, selected) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const el = h("div", { className: `die ${kind}${onclick ? " pickable" : ""}${selected ? " sel" : ""}`, title: String(v) });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>el.setAttribute("role", onclick ? "button" : "img");</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>el.setAttribute("aria-label", `Die showing ${v}${selected ? ", selected" : ""}`);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (onclick) { el.tabIndex = 0; el.setAttribute("aria-pressed", String(!!selected)); el.onclick = onclick; el.onkeydown = (k) =&gt; { if (k.key === " " || k.key === "Enter") { k.preventDefault(); onclick(); } }; }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>for (let i = 0; i &lt; 9; i++) el.append(h("i", { className: PIPS[v].includes(i) ? "p" : "" }));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>return el;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function field(label, hint, value, max) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const input = h("input", { type: "number", min: 0, max, value, step: 1, inputMode: "numeric" });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>return { input, el: h("label", { className: "f" }, h("span", {}, label, hint ? h("small", { textContent: hint }) : null), input) };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function setupView(e) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const f = {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>stale: field("Stale dice", "Locked from the start, can't be re-rolled", cfg.stale, MAX_DICE),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>pool: field("Re-rollable dice", "Can be re-rolled later", cfg.pool, MAX_DICE),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>lim: field("Re-rolls allowed", "Number of re-roll attempts", cfg.lim, MAX_REROLLS),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>};</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const inputs = Object.fromEntries(Object.entries(f).map(([k, v]) =&gt; [k, v.input]));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const go = h("button", { className: "primary", textContent: "Roll", disabled: busy, onclick: () =&gt; doRoll(inputs) });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>for (const i of Object.values(inputs)) i.onkeydown = (k) =&gt; { if (k.key === "Enter") go.click(); };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>return [f.stale.el, f.pool.el, f.lim.el,</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>h("div", { className: "row" }, go, e ? h("button", { textContent: "Back to last roll", onclick: () =&gt; { view = "result"; paint(); } }) : null)];</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function resultView(e, data) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const cur = current(e), left = rerollsLeft(e), picking = view === "pick";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const toggle = (i) =&gt; () =&gt; { picked.has(i) ? picked.delete(i) : picked.add(i); paint(); };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const out = [];</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (e.stale.length) out.push(h("div", {}, h("div", { className: "mut", textContent: "Stale" }), h("div", { className: "group" }, e.stale.map((v) =&gt; die(v, "stale")))));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const res = [cur.frozen.map((v) =&gt; die(v, "frozen"))];</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (cur.frozen.length &amp;&amp; cur.active.length) res.push(h("div", { className: "spacer" }));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>res.push(cur.active.map((v, i) =&gt; die(v, "active", picking ? toggle(i) : null, picked.has(i))));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>out.push(h("div", {}, h("div", { className: "mut", textContent: "Result" }), h("div", { className: "group" }, res)));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (picking) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>out.push(h("div", { className: "mut", textContent: "Select the dice to re-roll. Dice you leave unselected are kept for good." }),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">      </span>h("div", { className: "row" },</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">        </span>h("button", { className: "primary", textContent: `Confirm re-roll (${picked.size})`, disabled: busy || !picked.size, onclick: confirmReroll }),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">        </span>h("button", { textContent: "Cancel", disabled: busy, onclick: cancelPick })));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>} else {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>out.push(h("div", { className: "row" },</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">      </span>h("button", { className: "primary", textContent: "Re-roll dice", disabled: busy || left &lt; 1 || !cur.active.length, onclick: startPick }),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">      </span>h("button", { textContent: "New roll", disabled: busy, onclick: () =&gt; { view = "setup"; paint(); } }),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">      </span>h("button", { className: "link", textContent: data.s ? "Clear dice from table" : "Show dice on table", disabled: busy, onclick: toggleShown })));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>return out;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>const bracket = (vals, boldFrom = Infinity) =&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>h("span", {}, "[", vals.map((v, i) =&gt; [i ? ", " : "", i &gt;= boldFrom ? h("b", { textContent: v }) : String(v)]), "]");</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function entryEl(e, name, colour) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const time = new Date(e.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const el = h("div", { className: "entry" },</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>h("div", {}, h("b", { className: "n", textContent: name || "Player" }), h("span", { className: "mut", textContent: `<span class="Apple-converted-space">  </span>${time}<span class="Apple-converted-space">  </span>·<span class="Apple-converted-space">  </span>up to ${e.lim} re-roll${e.lim === 1 ? "" : "s"}` })),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>e.steps.map((s, i) =&gt; h("div", { className: "step" }, h("span", { className: "mut", textContent: i ? `Re-roll ${i}<span class="Apple-converted-space">  </span>` : "Roll<span class="Apple-converted-space">  </span>" }),</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">      </span>bracket(e.stale), bracket(s.frozen.concat(s.active), s.frozen.length))));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>el.style.setProperty("--c", colour || "#888");</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>return el;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>// ---------- paint ----------</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function paint() {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const data = meta[KEY];</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const e = data?.l?.[0] ? decode(data.l[0]) : null;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (view === null) view = e ? "result" : "setup";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (!e) view = "setup";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (view === "pick" &amp;&amp; (data.l[0] !== pickBase || rerollsLeft(e) &lt; 1)) { picked.clear(); view = "result"; }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>$("err").textContent = error;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>$("err").classList.toggle("on", !!error);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>$("status").textContent = busy ? "Saving…" : "";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>$("main").replaceChildren(...(view === "setup" ? setupView(e) : resultView(e, data)));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const players = Object.entries(meta).filter(([k, d]) =&gt; k.startsWith(PREFIX) &amp;&amp; Array.isArray(d?.l) &amp;&amp; d.l.length);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const sel = $("filter");</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (logFilter !== "all" &amp;&amp; !players.some(([k]) =&gt; k === logFilter)) logFilter = "all";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>sel.replaceChildren(h("option", { value: "all", textContent: "All players" }), ...players.map(([k, d]) =&gt; h("option", { value: k, textContent: d.n || "Player" })));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>sel.value = logFilter;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const rows = [];</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>for (const [k, d] of players) if (logFilter === "all" || logFilter === k)</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>for (const s of d.l) { const r = decode(s); if (r) rows.push({ r, n: d.n, c: d.c }); }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>rows.sort((a, b) =&gt; b.r.t - a.r.t);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>$("log").replaceChildren(...(rows.length ? rows.map((x) =&gt; entryEl(x.r, x.n, x.c)) : [h("div", { className: "mut", textContent: "No rolls yet." })]));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>$("gm").replaceChildren(...(isGM &amp;&amp; players.length ? [h("button", {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>className: confirmClear ? "danger" : "link", disabled: busy, onclick: clearAll,</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">    </span>textContent: confirmClear ? "Tap again: clear all logs and dice" : "Clear all logs" })] : []));</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>$("filter").onchange = (ev) =&gt; { logFilter = ev.target.value; paint(); };</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b; min-height: 18.0px"><span class="s1"><b></b></span><br></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>function applyTheme(t) {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const r = document.documentElement.style;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>r.setProperty("--bg", t.background.default); r.setProperty("--fg", t.text.primary);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>r.setProperty("--mut", t.text.secondary); r.setProperty("--pri", t.primary.main); r.setProperty("--onpri", t.primary.contrastText);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>OBR.onReady(async () =&gt; {</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>if (!OBR.player.id) { error = "Couldn't read your player ID, so rolls can't be saved."; }</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>KEY = PREFIX + OBR.player.id;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>meta = await OBR.room.getMetadata();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>try { applyTheme(await OBR.theme.getTheme()); OBR.theme.onChange(applyTheme); } catch {}</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>const colour = (c) =&gt; document.documentElement.style.setProperty("--me", c);</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>colour(await OBR.player.getColor());</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>isGM = (await OBR.player.getRole()) === "GM";</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>OBR.player.onChange((p) =&gt; { colour(p.color); const gm = p.role === "GM"; if (gm !== isGM) { isGM = gm; paint(); } });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>OBR.room.onMetadataChange((m) =&gt; { meta = m; paint(); });</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b><span class="Apple-converted-space">  </span>paint();</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>});</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;/script&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;/body&gt;</b></span></h1>
+<h1 style="margin: 0.0px 0.0px 0.0px 0.0px; font: 16.0px 'Helvetica Neue'; color: #ffffff; -webkit-text-stroke: #ffffff; background-color: #1a1c2b"><span class="s1"><b>&lt;/html&gt;</b></span></h1>
 </body>
 </html>

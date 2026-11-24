@@ -1,92 +1,112 @@
-<!doctype html>
-<meta charset="utf-8">
-<title>DicePocker background</title>
-<script type="module">
-// Runs for everyone in the room. Draws each player's latest roll on the map as local-only items
-// (nothing is saved into the scene, and no permissions are needed).
-import OBR, { buildShape, buildText } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
-import { decode, layout, rerollsLeft } from "./logic.js";
-
-const PREFIX = "com.dicepocker/p/";
-const LOOK = {
-  stale:  { fill: "#8a93a6", stroke: "#2b2f3a", ink: "#ffffff", sw: 3 },
-  frozen: { fill: "#e6e1d3", stroke: "#6b6b6b", ink: "#2a2a2a", sw: 3 },
-  active: { fill: "#ffffff", stroke: null,      ink: "#000000", sw: 6 }, // stroke = player colour
-};
-const drawn = new Map(); // player key -> { sig, ids }
-let chain = Promise.resolve();
-const queue = (fn) => (chain = chain.then(fn).catch((e) => console.error("DicePocker:", e)));
-
-const common = (item, x, y) => {
-  item.position = { x, y };
-  item.layer = "ATTACHMENT";
-  item.locked = true;
-  item.disableHit = true; // clicks pass through to the map
-  return item;
-};
-function box(x, y, s, look, stroke) {
-  const b = common(buildShape().width(s).height(s).shapeType("RECTANGLE").build(), x, y);
-  b.style = { fillColor: look.fill, fillOpacity: 1, strokeColor: stroke, strokeOpacity: 1, strokeWidth: look.sw, strokeDash: [] };
-  return b;
-}
-function text(str, x, y, w, h, style) {
-  const t = common(buildText().richText([{ type: "paragraph", children: [{ text: str }] }]).build(), x, y);
-  t.text = {
-    ...t.text, type: "PLAIN", plainText: str, width: w, height: h,
-    style: {
-      fillColor: "#000", fillOpacity: 1, strokeColor: "#000", strokeOpacity: 1, strokeWidth: 0,
-      textAlign: "CENTER", textAlignVertical: "MIDDLE", fontFamily: "Roboto",
-      fontSize: 16, fontWeight: 400, lineHeight: 1, padding: 0, ...style,
-    },
-  };
-  return t;
-}
-function build(e, data, size) {
-  const L = layout(e, size);
-  const x0 = e.x - L.width / 2, y0 = e.y - L.height / 2;
-  const colour = data.c || "#e5484d";
-  const items = [];
-  const left = rerollsLeft(e);
-  items.push(text(`${data.n || "Player"}  ·  re-rolls left: ${left}`, x0, y0 - size * 0.6, Math.max(L.width, size * 6), size * 0.5, {
-    textAlign: "LEFT", fillColor: colour, strokeColor: "#000", strokeWidth: 3, fontSize: size * 0.3, fontWeight: 700,
-  }));
-  for (const c of L.cells) {
-    const look = LOOK[c.kind];
-    items.push(box(x0 + c.x, y0 + c.y, size, look, look.stroke || colour));
-    items.push(text(String(c.v), x0 + c.x, y0 + c.y, size, size, { fillColor: look.ink, fontSize: size * 0.62, fontWeight: 700 }));
-  }
-  return items;
-}
-async function drop(key) {
-  const d = drawn.get(key);
-  drawn.delete(key);
-  if (d?.ids.length) await OBR.scene.local.deleteItems(d.ids);
-}
-async function sync() {
-  if (!(await OBR.scene.isReady())) { drawn.clear(); return; }
-  const meta = await OBR.room.getMetadata();
-  const size = Math.round(Math.max(48, (await OBR.scene.grid.getDpi()) * 0.75));
-  const live = new Set();
-  for (const [key, data] of Object.entries(meta)) {
-    if (!key.startsWith(PREFIX) || !data?.l?.length) continue;
-    live.add(key);
-    const sig = [data.s, data.n, data.c, size, data.l[0]].join("|");
-    if (drawn.get(key)?.sig === sig) continue;
-    await drop(key);
-    const e = data.s ? decode(data.l[0]) : null;
-    if (!e) continue;
-    const items = build(e, data, size);
-    await OBR.scene.local.addItems(items);
-    drawn.set(key, { sig, ids: items.map((i) => i.id) });
-  }
-  for (const key of [...drawn.keys()]) if (!live.has(key)) await drop(key);
-}
-
-OBR.onReady(() => {
-  const run = () => queue(sync);
-  OBR.room.onMetadataChange(run);
-  OBR.scene.grid.onChange(run);
-  OBR.scene.onReadyChange((ready) => { drawn.clear(); if (ready) run(); }); // local items vanish with the scene
-  run();
-});
-</script>
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title></title>
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="2685.7">
+  <style type="text/css">
+    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px Helvetica}
+    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px Helvetica; min-height: 14.0px}
+  </style>
+</head>
+<body>
+<p class="p1">&lt;!doctype html&gt;</p>
+<p class="p1">&lt;meta charset="utf-8"&gt;</p>
+<p class="p1">&lt;title&gt;DicePocker background&lt;/title&gt;</p>
+<p class="p1">&lt;script type="module"&gt;</p>
+<p class="p1">// Runs for everyone in the room. Draws each player's latest roll on the map as local-only items</p>
+<p class="p1">// (nothing is saved into the scene, and no permissions are needed).</p>
+<p class="p1">import OBR, { buildShape, buildText } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";</p>
+<p class="p1">import { decode, layout, rerollsLeft } from "./logic.js";</p>
+<p class="p2"><br></p>
+<p class="p1">const PREFIX = "com.dicepocker/p/";</p>
+<p class="p1">const LOOK = {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>stale:<span class="Apple-converted-space">  </span>{ fill: "#8a93a6", stroke: "#2b2f3a", ink: "#ffffff", sw: 3 },</p>
+<p class="p1"><span class="Apple-converted-space">  </span>frozen: { fill: "#e6e1d3", stroke: "#6b6b6b", ink: "#2a2a2a", sw: 3 },</p>
+<p class="p1"><span class="Apple-converted-space">  </span>active: { fill: "#ffffff", stroke: null,<span class="Apple-converted-space">      </span>ink: "#000000", sw: 6 }, // stroke = player colour</p>
+<p class="p1">};</p>
+<p class="p1">const drawn = new Map(); // player key -&gt; { sig, ids }</p>
+<p class="p1">let chain = Promise.resolve();</p>
+<p class="p1">const queue = (fn) =&gt; (chain = chain.then(fn).catch((e) =&gt; console.error("DicePocker:", e)));</p>
+<p class="p2"><br></p>
+<p class="p1">const common = (item, x, y) =&gt; {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>item.position = { x, y };</p>
+<p class="p1"><span class="Apple-converted-space">  </span>item.layer = "ATTACHMENT";</p>
+<p class="p1"><span class="Apple-converted-space">  </span>item.locked = true;</p>
+<p class="p1"><span class="Apple-converted-space">  </span>item.disableHit = true; // clicks pass through to the map</p>
+<p class="p1"><span class="Apple-converted-space">  </span>return item;</p>
+<p class="p1">};</p>
+<p class="p1">function box(x, y, s, look, stroke) {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const b = common(buildShape().width(s).height(s).shapeType("RECTANGLE").build(), x, y);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>b.style = { fillColor: look.fill, fillOpacity: 1, strokeColor: stroke, strokeOpacity: 1, strokeWidth: look.sw, strokeDash: [] };</p>
+<p class="p1"><span class="Apple-converted-space">  </span>return b;</p>
+<p class="p1">}</p>
+<p class="p1">function text(str, x, y, w, h, style) {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const t = common(buildText().richText([{ type: "paragraph", children: [{ text: str }] }]).build(), x, y);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>t.text = {</p>
+<p class="p1"><span class="Apple-converted-space">    </span>...t.text, type: "PLAIN", plainText: str, width: w, height: h,</p>
+<p class="p1"><span class="Apple-converted-space">    </span>style: {</p>
+<p class="p1"><span class="Apple-converted-space">      </span>fillColor: "#000", fillOpacity: 1, strokeColor: "#000", strokeOpacity: 1, strokeWidth: 0,</p>
+<p class="p1"><span class="Apple-converted-space">      </span>textAlign: "CENTER", textAlignVertical: "MIDDLE", fontFamily: "Roboto",</p>
+<p class="p1"><span class="Apple-converted-space">      </span>fontSize: 16, fontWeight: 400, lineHeight: 1, padding: 0, ...style,</p>
+<p class="p1"><span class="Apple-converted-space">    </span>},</p>
+<p class="p1"><span class="Apple-converted-space">  </span>};</p>
+<p class="p1"><span class="Apple-converted-space">  </span>return t;</p>
+<p class="p1">}</p>
+<p class="p1">function build(e, data, size) {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const L = layout(e, size);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const x0 = e.x - L.width / 2, y0 = e.y - L.height / 2;</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const colour = data.c || "#e5484d";</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const items = [];</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const left = rerollsLeft(e);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>items.push(text(`${data.n || "Player"}<span class="Apple-converted-space">  </span>·<span class="Apple-converted-space">  </span>re-rolls left: ${left}`, x0, y0 - size * 0.6, Math.max(L.width, size * 6), size * 0.5, {</p>
+<p class="p1"><span class="Apple-converted-space">    </span>textAlign: "LEFT", fillColor: colour, strokeColor: "#000", strokeWidth: 3, fontSize: size * 0.3, fontWeight: 700,</p>
+<p class="p1"><span class="Apple-converted-space">  </span>}));</p>
+<p class="p1"><span class="Apple-converted-space">  </span>for (const c of L.cells) {</p>
+<p class="p1"><span class="Apple-converted-space">    </span>const look = LOOK[c.kind];</p>
+<p class="p1"><span class="Apple-converted-space">    </span>items.push(box(x0 + c.x, y0 + c.y, size, look, look.stroke || colour));</p>
+<p class="p1"><span class="Apple-converted-space">    </span>items.push(text(String(c.v), x0 + c.x, y0 + c.y, size, size, { fillColor: look.ink, fontSize: size * 0.62, fontWeight: 700 }));</p>
+<p class="p1"><span class="Apple-converted-space">  </span>}</p>
+<p class="p1"><span class="Apple-converted-space">  </span>// Explicit stacking: each box, then its digit, then the next box. Without this, items created in the</p>
+<p class="p1"><span class="Apple-converted-space">  </span>// same millisecond tie on z-index and a digit can end up underneath its own box.</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const z = Date.now();</p>
+<p class="p1"><span class="Apple-converted-space">  </span>items.forEach((it, i) =&gt; { it.zIndex = z + i; it.disableAutoZIndex = true; });</p>
+<p class="p1"><span class="Apple-converted-space">  </span>return items;</p>
+<p class="p1">}</p>
+<p class="p1">async function drop(key) {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const d = drawn.get(key);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>drawn.delete(key);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>if (d?.ids.length) await OBR.scene.local.deleteItems(d.ids);</p>
+<p class="p1">}</p>
+<p class="p1">async function sync() {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>if (!(await OBR.scene.isReady())) { drawn.clear(); return; }</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const meta = await OBR.room.getMetadata();</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const size = Math.round(Math.max(48, (await OBR.scene.grid.getDpi()) * 0.75));</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const live = new Set();</p>
+<p class="p1"><span class="Apple-converted-space">  </span>for (const [key, data] of Object.entries(meta)) {</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if (!key.startsWith(PREFIX) || !data?.l?.length) continue;</p>
+<p class="p1"><span class="Apple-converted-space">    </span>live.add(key);</p>
+<p class="p1"><span class="Apple-converted-space">    </span>const sig = [data.s, data.n, data.c, size, data.l[0]].join("|");</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if (drawn.get(key)?.sig === sig) continue;</p>
+<p class="p1"><span class="Apple-converted-space">    </span>await drop(key);</p>
+<p class="p1"><span class="Apple-converted-space">    </span>const e = data.s ? decode(data.l[0]) : null;</p>
+<p class="p1"><span class="Apple-converted-space">    </span>if (!e) continue;</p>
+<p class="p1"><span class="Apple-converted-space">    </span>const items = build(e, data, size);</p>
+<p class="p1"><span class="Apple-converted-space">    </span>await OBR.scene.local.addItems(items);</p>
+<p class="p1"><span class="Apple-converted-space">    </span>drawn.set(key, { sig, ids: items.map((i) =&gt; i.id) });</p>
+<p class="p1"><span class="Apple-converted-space">  </span>}</p>
+<p class="p1"><span class="Apple-converted-space">  </span>for (const key of [...drawn.keys()]) if (!live.has(key)) await drop(key);</p>
+<p class="p1">}</p>
+<p class="p2"><br></p>
+<p class="p1">OBR.onReady(() =&gt; {</p>
+<p class="p1"><span class="Apple-converted-space">  </span>const run = () =&gt; queue(sync);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>OBR.room.onMetadataChange(run);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>OBR.scene.grid.onChange(run);</p>
+<p class="p1"><span class="Apple-converted-space">  </span>OBR.scene.onReadyChange((ready) =&gt; { drawn.clear(); if (ready) run(); }); // local items vanish with the scene</p>
+<p class="p1"><span class="Apple-converted-space">  </span>run();</p>
+<p class="p1">});</p>
+<p class="p1">&lt;/script&gt;</p>
+</body>
+</html>
