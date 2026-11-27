@@ -62,7 +62,7 @@ select{font:inherit;padding:4px 6px;border-radius:8px;border:1px solid var(--lin
 
 <script type="module">
 import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
-import { MAX_DICE, MAX_REROLLS, newRoll, reroll, rerollsLeft, current, encode, decode, trimLog } from "./logic.js";
+import { MAX_DICE, MAX_REROLLS, newRoll, reroll, rerollsLeft, current, encode, decode, trimLog } from "./logic.js?v=2";
 
 const PREFIX = "com.dicepocker/p/";
 const POS_KEY = "com.dicepocker/pos";
@@ -129,6 +129,12 @@ async function confirmReroll() {
 const toggleShown = () => commit((d) => { d.s = d.s ? 0 : 1; return d; });
 const startPick = () => { picked = new Set(); pickBase = meta[KEY].l[0]; view = "pick"; paint(); };
 const cancelPick = () => { picked.clear(); view = "result"; paint(); };
+// GM only: switch to the Move dice tool (registered by the background page) without hunting for it in the toolbar
+async function activateMove() {
+  try { await OBR.tool.activateMode("com.dicepocker/tool", "com.dicepocker/move"); error = ""; try { await OBR.action.close(); } catch {} }
+  catch (err) { error = "The Move dice tool isn't available: " + (err?.message || err); }
+  paint();
+}
 // GM only (UI-level). Deletes every player's stored log from the room data, which also removes their dice from the table.
 async function clearAll() {
   if (!confirmClear) {
@@ -239,9 +245,12 @@ function paint() {
     for (const s of d.l) { const r = decode(s); if (r) rows.push({ r, n: d.n, c: d.c }); }
   rows.sort((a, b) => b.r.t - a.r.t);
   $("log").replaceChildren(...(rows.length ? rows.map((x) => entryEl(x.r, x.n, x.c)) : [h("div", { className: "mut", textContent: "No rolls yet." })]));
-  $("gm").replaceChildren(...(isGM && players.length ? [h("button", {
-    className: confirmClear ? "danger" : "link", disabled: busy, onclick: clearAll,
-    textContent: confirmClear ? "Tap again: clear all logs and dice" : "Clear all logs" })] : []));
+  $("gm").replaceChildren(...(isGM ? [
+    h("button", { className: "link", textContent: "Move dice", title: "Switch to the tool that drags dice groups around the map", onclick: activateMove }),
+    ...(players.length ? [h("button", {
+      className: confirmClear ? "danger" : "link", disabled: busy, onclick: clearAll,
+      textContent: confirmClear ? "Tap again: clear all logs and dice" : "Clear all logs" })] : []),
+  ] : []));
 }
 $("filter").onchange = (ev) => { logFilter = ev.target.value; paint(); };
 
