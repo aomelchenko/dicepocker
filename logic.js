@@ -90,3 +90,14 @@ export function layout(e, size, cols = 10) {
   const height = Math.max(...cells.map((c) => c.y)) + size;
   return { cells, width, height };
 }
+
+// GM-moved dice groups. The new centre lives in a separate GM-owned record, { playerKey: [rollTime, x, y] },
+// so moving never competes with a player's own saves. It only applies while it matches that player's current roll.
+export const withMoved = (e, o) => (e && Array.isArray(o) && o[0] === e.t ? { ...e, x: o[1], y: o[2] } : e);
+export const inside = (p, b) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+// Keeps only the positions whose roll is still the player's current one. rollTimes: { playerKey: t }
+export function prunePositions(pos, rollTimes) {
+  const out = {};
+  for (const [k, o] of Object.entries(pos || {})) if (Array.isArray(o) && rollTimes[k] === o[0]) out[k] = o;
+  return out;
+}

@@ -65,6 +65,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 import { MAX_DICE, MAX_REROLLS, newRoll, reroll, rerollsLeft, current, encode, decode, trimLog } from "./logic.js";
 
 const PREFIX = "com.dicepocker/p/";
+const POS_KEY = "com.dicepocker/pos";
 const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
 const h = (tag, props = {}, ...kids) => {
   const el = Object.assign(document.createElement(tag), props);
@@ -142,6 +143,7 @@ async function clearAll() {
   try {
     const emptied = {};
     for (const k of Object.keys(meta)) if (k.startsWith(PREFIX)) emptied[k] = null; // replaces the stored value outright (nothing left to merge with)
+    if (meta[POS_KEY]) emptied[POS_KEY] = null;
     await OBR.room.setMetadata(emptied);
     meta = { ...meta, ...emptied };
   } catch (err) { error = err?.message || String(err); }

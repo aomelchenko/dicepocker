@@ -5,9 +5,12 @@
 // Runs for everyone in the room. Draws each player's latest roll on the map as local-only items
 // (nothing is saved into the scene, and no permissions are needed).
 import OBR, { buildShape, buildText } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
-import { decode, layout, rerollsLeft } from "./logic.js";
+import { decode, layout, rerollsLeft, withMoved, inside, prunePositions } from "./logic.js";
 
 const PREFIX = "com.dicepocker/p/";
+const POS_KEY = "com.dicepocker/pos"; // GM-moved positions
+const TOOL = "com.dicepocker/tool", MODE = "com.dicepocker/move";
+const ICON = new URL("move-dice.svg", import.meta.url).href;
 const LOOK = {
   stale:  { fill: "#8a93a6", stroke: "#2b2f3a", ink: "#ffffff", sw: 3 },
   frozen: { fill: "#e6e1d3", stroke: "#6b6b6b", ink: "#2a2a2a", sw: 3 },
@@ -59,7 +62,8 @@ function build(e, data, size) {
   // same millisecond tie on z-index and a digit can end up underneath its own box.
   const z = Date.now();
   items.forEach((it, i) => { it.zIndex = z + i; it.disableAutoZIndex = true; });
-  return items;
+  // grab area for the Move tool: the dice plus the name label above them
+  return { items, bounds: { x: x0, y: y0 - size * 0.6, w: Math.max(L.width, size * 6), h: L.height + size * 0.6 } };
 }
 async function drop(key) {
   const d = drawn.get(key);
@@ -71,26 +75,104 @@ async function sync() {
   const meta = await OBR.room.getMetadata();
   const size = Math.round(Math.max(48, (await OBR.scene.grid.getDpi()) * 0.75));
   const live = new Set();
+  const moved = meta[POS_KEY] || {};
   for (const [key, data] of Object.entries(meta)) {
     if (!key.startsWith(PREFIX) || !data?.l?.length) continue;
     live.add(key);
-    const sig = [data.s, data.n, data.c, size, data.l[0]].join("|");
+    if (drag?.key === key) continue; // being dragged right now; redrawn when the drop is saved
+    const e = data.s ? withMoved(decode(data.l[0]), moved[key]) : null;
+    const sig = [data.s, data.n, data.c, size, data.l[0], e?.x, e?.y].join("|");
     if (drawn.get(key)?.sig === sig) continue;
     await drop(key);
-    const e = data.s ? decode(data.l[0]) : null;
     if (!e) continue;
-    const items = build(e, data, size);
+    const { items, bounds } = build(e, data, size);
     await OBR.scene.local.addItems(items);
-    drawn.set(key, { sig, ids: items.map((i) => i.id) });
+    drawn.set(key, { sig, ids: items.map((i) => i.id), bounds, t: e.t, center: { x: e.x, y: e.y } });
   }
   for (const key of [...drawn.keys()]) if (!live.has(key)) await drop(key);
 }
 
-OBR.onReady(() => {
-  const run = () => queue(sync);
+// ---------- GM "Move dice" tool: drag a dice group to a new spot, for everyone ----------
+let drag = null; // { key, d, start, base, fast, busy, dx, dy }
+const grabbed = (p) => { let hit = null; for (const [key, d] of drawn) if (inside(p, d.bounds)) hit = key; return hit; };
+async function moveTo(g, dx, dy) {
+  const apply = (items) => { for (const it of items) { const b = g.base.get(it.id); if (b) { it.position.x = b.x + dx; it.position.y = b.y + dy; } } };
+  try { await OBR.scene.local.updateItems(g.d.ids, apply, g.fast); }
+  catch (err) { if (!g.fast) throw err; g.fast = false; await OBR.scene.local.updateItems(g.d.ids, apply, false); }
+}
+async function pump(g) { // live preview on the GM's screen, one update at a time
+  g.busy = true;
+  try {
+    let sx, sy;
+    do { sx = g.dx; sy = g.dy; await moveTo(g, sx, sy); } while (sx !== g.dx || sy !== g.dy);
+  } catch (err) { console.error("DicePocker:", err); } finally { g.busy = false; }
+}
+async function dragStart(event) {
+  const key = grabbed(event.pointerPosition);
+  if (!key) return;
+  const d = drawn.get(key);
+  const items = await OBR.scene.local.getItems(d.ids);
+  drag = { key, d, start: event.pointerPosition, base: new Map(items.map((i) => [i.id, { ...i.position }])), fast: true, busy: false, dx: 0, dy: 0 };
+}
+function dragMove(event) {
+  const g = drag;
+  if (!g) return;
+  g.dx = event.pointerPosition.x - g.start.x;
+  g.dy = event.pointerPosition.y - g.start.y;
+  if (!g.busy) pump(g);
+}
+async function dragEnd(event) {
+  const g = drag;
+  if (!g) return;
+  g.dx = event.pointerPosition.x - g.start.x;
+  g.dy = event.pointerPosition.y - g.start.y;
+  for (let i = 0; g.busy && i < 50; i++) await new Promise((r) => setTimeout(r, 10));
+  try {
+    if (Math.hypot(g.dx, g.dy) < 3) { await moveTo(g, 0, 0); return; } // a click, not a drag
+    const meta = await OBR.room.getMetadata();
+    const times = {};
+    for (const [k, v] of Object.entries(meta)) if (k.startsWith(PREFIX) && v?.l?.[0]) times[k] = decode(v.l[0])?.t;
+    const pos = prunePositions(meta[POS_KEY], times);
+    pos[g.key] = [g.d.t, Math.round(g.d.center.x + g.dx), Math.round(g.d.center.y + g.dy)];
+    await OBR.room.setMetadata({ [POS_KEY]: pos });
+  } catch (err) {
+    console.error("DicePocker:", err);
+    try { await moveTo(g, 0, 0); OBR.notification.show("DicePocker: couldn't save the new dice position.", "ERROR"); } catch {}
+  } finally { drag = null; run(); }
+}
+async function dragCancel() {
+  const g = drag;
+  drag = null;
+  if (g) { try { await moveTo(g, 0, 0); } catch (err) { console.error("DicePocker:", err); } }
+}
+let toolOn = false, toolChain = Promise.resolve();
+async function setTool(on) {
+  if (on === toolOn) return;
+  toolOn = on;
+  if (on) {
+    await OBR.tool.create({ id: TOOL, defaultMode: MODE, icons: [{ icon: ICON, label: "Move dice (DicePocker)" }] });
+    await OBR.tool.createMode({
+      id: MODE,
+      icons: [{ icon: ICON, label: "Drag a dice group to move it", filter: { activeTools: [TOOL] } }],
+      onToolDragStart: (_, e) => dragStart(e),
+      onToolDragMove: (_, e) => dragMove(e),
+      onToolDragEnd: (_, e) => dragEnd(e),
+      onToolDragCancel: () => dragCancel(),
+    });
+  } else {
+    await OBR.tool.removeMode(MODE);
+    await OBR.tool.remove(TOOL);
+  }
+}
+const run = () => queue(sync);
+
+OBR.onReady(async () => {
   OBR.room.onMetadataChange(run);
   OBR.scene.grid.onChange(run);
   OBR.scene.onReadyChange((ready) => { drawn.clear(); if (ready) run(); }); // local items vanish with the scene
   run();
+  const setGM = (role) => (toolChain = toolChain.then(() => setTool(role === "GM")).catch((e) => console.error("DicePocker:", e)));
+  setGM(await OBR.player.getRole());
+  OBR.player.onChange((p) => setGM(p.role));
 });
 </script>
